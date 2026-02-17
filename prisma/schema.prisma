@@ -1,0 +1,170 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String
+  role          UserRole
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([email])
+  @@index([role])
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  priceCLP    Int      // Precio en pesos chilenos (IVA incluido, sin decimales)
+  imageUrl    String?
+  active      Boolean  @default(true)
+  stock       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orderItems        OrderItem[]
+  inventoryMovements InventoryMovement[]
+
+  @@index([active])
+  @@index([name])
+}
+
+model Order {
+  id              String          @id @default(cuid())
+  customerName    String
+  customerEmail   String
+  customerPhone   String
+  fulfillmentType FulfillmentType
+  deliveryAddress String?
+  zone            String?
+  totalCLP        Int              // Total en pesos chilenos (IVA incluido, sin decimales)
+  status          OrderStatus     @default(CREADO)
+  publicToken     String          @unique // Token único para tracking público
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  items           OrderItem[]
+  payments        Payment[]
+  delivery        DeliveryAssignment?
+
+  @@index([status])
+  @@index([customerEmail])
+  @@index([publicToken])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id            String   @id @default(cuid())
+  orderId       String
+  productId     String
+  quantity      Int
+  unitPriceCLP  Int       // Precio unitario en pesos chilenos (IVA incluido, sin decimales)
+  lineTotalCLP  Int       // Total línea en pesos chilenos (IVA incluido, sin decimales)
+  createdAt     DateTime  @default(now())
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+model Payment {
+  id        String        @id @default(cuid())
+  orderId   String
+  provider  PaymentProvider @default(MOCK)
+  status    PaymentStatus
+  amountCLP Int           // Monto en pesos chilenos (IVA incluido, sin decimales)
+  createdAt DateTime      @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+}
+
+model InventoryMovement {
+  id        String                @id @default(cuid())
+  productId String
+  type      InventoryMovementType
+  quantity  Int
+  reason    String?
+  userId    String?
+  createdAt DateTime              @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId])
+  @@index([type])
+  @@index([createdAt])
+}
+
+model DeliveryAssignment {
+  id            String         @id @default(cuid())
+  orderId       String         @unique
+  deliveryUserId String?
+  status        DeliveryStatus @default(ASSIGNED)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([status])
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  JEFE_VENTAS
+  PRODUCCION
+  RECEPCION
+  DELIVERY
+}
+
+enum OrderStatus {
+  CREADO
+  PAGADO
+  EN_PREPARACION
+  LISTO
+  EN_RUTA
+  ENTREGADO
+  RETIRADO
+  CANCELADO
+}
+
+enum FulfillmentType {
+  DELIVERY
+  PICKUP
+}
+
+enum PaymentProvider {
+  MOCK
+}
+
+enum PaymentStatus {
+  PAID
+  FAILED
+}
+
+enum InventoryMovementType {
+  IN
+  OUT
+  ADJUST
+}
+
+enum DeliveryStatus {
+  ASSIGNED
+  EN_ROUTE
+  DELIVERED
+}

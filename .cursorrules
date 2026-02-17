@@ -1,0 +1,280 @@
+# Pastelería Bella - Backend API - Reglas del Proyecto
+
+## Stack Tecnológico (NO CAMBIAR)
+
+- **NestJS 10+** - Framework backend
+- **PostgreSQL** + **Prisma** - Base de datos y ORM
+- **TypeScript** estricto
+- **Zod** para validación de inputs (opcional, pero recomendado)
+- **bcryptjs** para passwords
+
+## Restricciones Arquitectónicas
+
+1. **Arquitectura modular** - Usar módulos NestJS (ProductsModule, OrdersModule, etc.)
+2. **NO acceso directo a DB** - Todo vía Prisma Service
+3. **NO Supabase Auth** - Autenticación propia con bcrypt + JWT/cookies
+4. **Separación de responsabilidades** - Controller → Service → Prisma
+5. **Implementar por incrementos pequeños** - Cero refactors grandes
+
+## Estructura de Carpetas
+
+```
+pasteleria-api/
+├── src/
+│   ├── products/          # Módulo de productos
+│   │   ├── products.controller.ts
+│   │   ├── products.service.ts
+│   │   └── products.module.ts
+│   ├── orders/            # Módulo de pedidos
+│   ├── auth/              # Módulo de autenticación
+│   ├── prisma/            # Servicio Prisma (global)
+│   │   ├── prisma.service.ts
+│   │   └── prisma.module.ts
+│   ├── app.module.ts      # Módulo principal
+│   └── main.ts            # Bootstrap de la aplicación
+├── prisma/
+│   ├── schema.prisma      # Esquema de base de datos
+│   ├── migrations/        # Migraciones
+│   └── seed.ts            # Seed de datos iniciales
+└── [config files]
+```
+
+## Reglas de Negocio (Chile V1)
+
+### Precios
+- **IVA incluido** - Todos los precios son finales (priceCLP ya incluye IVA)
+- **CLP como INT** - Todos los precios en pesos chilenos son enteros (sin decimales)
+  - `priceCLP Int` (NO Decimal)
+  - `totalCLP Int`
+  - `unitPriceCLP Int`
+  - `lineTotalCLP Int`
+  - `amountCLP Int`
+- Formato CLP: usar separadores de miles (ej: $15.990)
+- **Razón**: Evita problemas de formateo, sumas y UI con decimales innecesarios
+
+### Horario de Atención
+- **09:00 a 17:00** - Validar checkout dentro de este horario (server-side)
+- Validación en service con función `isValidBusinessHours()`
+
+### Delivery y Retiro
+- **Delivery propio** y **Retiro en tienda** (fulfillmentType: DELIVERY | PICKUP)
+- **Zona delivery inicial**: Solo "Santiago Centro"
+- Validar zona en service si fulfillmentType = DELIVERY
+- **Sin cupos por ventana horaria** (V1)
+
+### Roles V1 (Obligatorios)
+- `SUPER_ADMIN` - Acceso total
+- `JEFE_VENTAS` - Reportes
+- `PRODUCCION` - Inventario/stock, CRUD productos
+- `RECEPCION` - Gestiona pedidos y prepara despacho
+- `DELIVERY` - Marca estados de entrega
+
+### Estados de Pedido V1
+- `CREADO` - Pedido creado, pendiente de pago
+- `PAGADO` - Pago confirmado
+- `EN_PREPARACION` - En preparación
+- `LISTO` - Listo para entrega/retiro
+- `EN_RUTA` - Solo para delivery, en camino
+- `ENTREGADO` - Delivery completado
+- `RETIRADO` - Retiro en tienda completado
+- `CANCELADO` - Pedido cancelado
+
+### Transiciones de Estado (Validar en service)
+- `PAGADO` → `EN_PREPARACION` (solo RECEPCION)
+- `EN_PREPARACION` → `LISTO` (solo RECEPCION)
+- `LISTO` → `EN_RUTA` (solo si fulfillmentType = DELIVERY, solo RECEPCION)
+- `LISTO` → `RETIRADO` (solo si fulfillmentType = PICKUP, solo RECEPCION)
+- `EN_RUTA` → `ENTREGADO` (solo RECEPCION o DELIVERY)
+- Cualquier estado → `CANCELADO` (solo SUPER_ADMIN)
+
+## Seguridad (Obligatorio)
+
+1. **Validación Zod** en TODOS los DTOs (Data Transfer Objects)
+2. **Guards NestJS** para RBAC (Roles Based Access Control)
+3. **Variables de entorno** para secretos (DATABASE_URL, JWT_SECRET, SESSION_SECRET)
+4. **Passwords hasheados** con bcrypt (10 rounds mínimo)
+5. **Cookies httpOnly** para sesiones (si se usa)
+6. **Transacciones Prisma** para operaciones críticas (pago + inventario)
+
+## Arquitectura NestJS
+
+### Estructura de Módulos
+
+**Patrón estándar por módulo:**
+```
+module-name/
+├── module-name.controller.ts  # Endpoints HTTP
+├── module-name.service.ts     # Lógica de negocio
+├── module-name.module.ts       # Configuración del módulo
+└── dto/                        # Data Transfer Objects (opcional)
+    ├── create-module-name.dto.ts
+    └── update-module-name.dto.ts
+```
+
+### Prisma Service (Global)
+
+- **Ubicación**: `src/prisma/prisma.service.ts`
+- **Módulo**: `PrismaModule` marcado como `@Global()`
+- **Uso**: Inyectar `PrismaService` en cualquier service
+- **Conexión**: Se conecta automáticamente en `onModuleInit()`
+
+**Ejemplo de uso:**
+```typescript
+@Injectable()
+export class ProductsService {
+  constructor(private prisma: PrismaService) {}
+  
+  async findAll() {
+    return this.prisma.product.findMany()
+  }
+}
+```
+
+### Controllers
+
+- **Decoradores**: `@Controller('ruta')` para definir ruta base
+- **Métodos HTTP**: `@Get()`, `@Post()`, `@Patch()`, `@Delete()`
+- **Validación**: Usar `@Body()` con DTOs tipados
+- **Respuestas**: Retornar objetos directamente (NestJS serializa a JSON)
+
+**Ejemplo:**
+```typescript
+@Controller('products')
+export class ProductsController {
+  constructor(private readonly productsService: ProductsService) {}
+
+  @Get()
+  async findAll() {
+    return this.productsService.findAll()
+  }
+}
+```
+
+### Services
+
+- **Lógica de negocio**: Toda la lógica va en services, NO en controllers
+- **Inyección de dependencias**: Usar constructor injection
+- **Transacciones**: Usar `prisma.$transaction()` para operaciones atómicas
+
+### CORS
+
+- **Configurado en**: `src/main.ts`
+- **Origen permitido**: `FRONTEND_URL` desde variables de entorno (default: http://localhost:3000)
+- **Credenciales**: Habilitadas para cookies/sesiones
+
+### Prefijo Global
+
+- **Prefijo**: `/api` configurado en `main.ts`
+- **Rutas finales**: `/api/products`, `/api/orders`, etc.
+
+## Base de Datos (Prisma)
+
+### Modelos Obligatorios
+- `User` - email, passwordHash, role
+- `Product` - name, description, priceCLP (Int), imageUrl, active, stock
+- `Order` - customerName, customerEmail, customerPhone, fulfillmentType, deliveryAddress, zone, totalCLP (Int), status, publicToken (String @unique)
+- `OrderItem` - orderId, productId, quantity, unitPriceCLP (Int), lineTotalCLP (Int)
+- `Payment` - orderId, provider (MOCK), status (PAID|FAILED), amountCLP (Int)
+- `InventoryMovement` - productId, type (IN|OUT|ADJUST), quantity, reason, userId
+- `DeliveryAssignment` - orderId, deliveryUserId, status
+
+### Tracking Público de Pedidos
+- `Order.publicToken` - Token único generado al crear pedido (String @unique)
+- Endpoint público: `GET /api/orders/:id?token=:publicToken`
+- Validar que el token coincida con el pedido antes de mostrar información
+- Usar para tracking sin autenticación (cliente ve su pedido con id + token)
+
+### Reglas Prisma
+- **Service singleton** - Usar `PrismaService` inyectado
+- **Solo acceso desde server** - NUNCA exponer Prisma directamente
+- **Transacciones** para operaciones críticas (pago + inventario)
+
+## Inventario
+
+### Descuento Automático
+- Al pasar Order a `PAGADO`, descontar stock automáticamente
+- Crear `InventoryMovement` (type: OUT, reason: "Venta pedido #X")
+- Validar stock suficiente antes de descontar (rollback si falla)
+- Usar transacción Prisma
+
+### Ajuste Manual
+- Solo rol `PRODUCCION` puede ajustar stock
+- Crear `InventoryMovement` (type: ADJUST) con razón
+- Validar permisos con Guards
+
+## Endpoints API
+
+### Estructura
+- Todas las rutas tienen prefijo `/api`
+- Usar decoradores NestJS (`@Get()`, `@Post()`, etc.)
+- Validación con DTOs y class-validator (opcional)
+- Guards para autenticación/autorización
+
+### Endpoints Principales
+- `POST /api/auth/login` - Login
+- `POST /api/auth/logout` - Logout
+- `GET /api/products` - Listar productos activos
+- `GET /api/products/:id` - Producto por ID
+- `POST /api/orders` - Crear pedido (genera publicToken)
+- `GET /api/orders` - Listar pedidos (admin, requiere auth)
+- `GET /api/orders/:id?token=:publicToken` - Pedido por ID (público, requiere token)
+- `PATCH /api/orders/:id` - Actualizar estado (admin, requiere auth)
+- `POST /api/payments` - Procesar pago mock
+- `POST /api/inventory/adjust` - Ajustar stock
+- `GET /api/inventory/movements` - Historial movimientos
+- `GET /api/reports/sales` - Reporte ventas
+
+## Testing y Validación
+
+### Por Commit
+- Cada commit debe dejar el sistema **runnable**
+- Probar endpoints después de cada commit
+- Verificar que no hay errores de TypeScript
+- Verificar que Prisma Client se genera correctamente
+
+### Validaciones Comunes
+- TypeScript compila sin errores
+- `npm run dev` inicia correctamente
+- Prisma migrations ejecutadas
+- Seed ejecutado (datos iniciales)
+- Endpoints responden correctamente
+
+## Buenas Prácticas
+
+### Código
+- **TypeScript estricto** - Habilitar strict mode
+- **Nombres descriptivos** - Variables y funciones claras
+- **Comentarios** - Solo cuando sea necesario explicar lógica compleja
+- **DRY** - No repetir código, usar servicios reutilizables
+- **Single Responsibility** - Cada service/controller tiene una responsabilidad
+
+### Performance
+- **Prisma Service singleton** - Un solo cliente por instancia
+- **Paginación** en listados grandes (opcional V1)
+- **Índices DB** en campos frecuentes (Order.status, Product.active)
+- **Queries optimizadas** - Usar `select` para campos específicos cuando sea necesario
+
+### Seguridad
+- **Validación de inputs** - Siempre validar datos de entrada
+- **Sanitización** - Limpiar datos antes de guardar
+- **Error handling** - Manejar errores apropiadamente sin exponer información sensible
+
+## Variables de Entorno
+
+### Requeridas
+- `DATABASE_URL` - URL de conexión PostgreSQL
+- `PORT` - Puerto del servidor (default: 3001)
+- `FRONTEND_URL` - URL del frontend para CORS (default: http://localhost:3000)
+
+### Opcionales
+- `JWT_SECRET` - Secreto para JWT (si se usa)
+- `SESSION_SECRET` - Secreto para cookies de sesión (si se usa)
+- `NODE_ENV` - development | production
+
+## Notas Importantes
+
+- **Chile V1** - Reglas específicas para mercado chileno (IVA incluido, horario, zona)
+- **Vertical slice primero** - Flujo completo funcional antes de features adicionales
+- **Sin refactors grandes** - Implementar por incrementos pequeños
+- **Separación frontend/backend** - El frontend consume APIs, NO accede directamente a Prisma
+- **CORS configurado** - Permite requests desde el frontend Next.js
