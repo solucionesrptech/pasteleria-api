@@ -16,15 +16,41 @@ Backend API de Pastelería Bella construido con NestJS.
 npm install
 ```
 
-### 2. Configurar base de datos
+### 2. Configurar variables de entorno
 
-Crea un archivo `.env` en la raíz del proyecto:
+Copia el archivo `.env.example` a `.env`:
+
+```bash
+cp .env.example .env
+```
+
+Edita `.env` y configura los valores según tu entorno:
 
 ```env
+# URL de conexión a PostgreSQL (OBLIGATORIA)
 DATABASE_URL=postgresql://usuario:password@localhost:5432/pasteleria_bella?schema=public
+
+# Puerto del servidor API (opcional, default: 3001)
 PORT=3001
+
+# URL del frontend para CORS (opcional, default: http://localhost:3000)
 FRONTEND_URL=http://localhost:3000
+
+# Entorno de ejecución (opcional, default: development)
+NODE_ENV=development
 ```
+
+**Variables de entorno:**
+
+- **DATABASE_URL** (OBLIGATORIA): URL de conexión a PostgreSQL. Formato: `postgresql://usuario:password@host:puerto/nombre_db?schema=public`
+- **PORT** (opcional): Puerto en el que correrá el servidor. Default: `3001`
+- **FRONTEND_URL** (opcional): URL del frontend para configurar CORS. Default: `http://localhost:3000`
+- **NODE_ENV** (opcional): Entorno de ejecución. Valores: `development` | `production`. Default: `development`
+
+**Notas importantes:**
+- El archivo `.env` está en `.gitignore` y no se subirá a Git
+- En desarrollo, algunas variables tienen valores por defecto (con advertencias)
+- En producción, `DATABASE_URL` es **obligatoria** y debe estar configurada en tu plataforma de hosting
 
 ### 3. Generar cliente Prisma
 
