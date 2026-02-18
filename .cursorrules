@@ -5,7 +5,8 @@
 - **NestJS 10+** - Framework backend
 - **PostgreSQL** + **Prisma** - Base de datos y ORM
 - **TypeScript** estricto
-- **Zod** para validación de inputs (opcional, pero recomendado)
+- **class-validator** y **class-transformer** para validación de DTOs (OBLIGATORIO)
+- **@nestjs/swagger** para documentación de API (OBLIGATORIO)
 - **bcryptjs** para passwords
 
 ## Restricciones Arquitectónicas
@@ -89,12 +90,13 @@ pasteleria-api/
 
 ## Seguridad (Obligatorio)
 
-1. **Validación Zod** en TODOS los DTOs (Data Transfer Objects)
+1. **Validación con class-validator** en TODOS los DTOs (Data Transfer Objects)
 2. **Guards NestJS** para RBAC (Roles Based Access Control)
 3. **Variables de entorno** para secretos (DATABASE_URL, JWT_SECRET, SESSION_SECRET)
 4. **Passwords hasheados** con bcrypt (10 rounds mínimo)
 5. **Cookies httpOnly** para sesiones (si se usa)
 6. **Transacciones Prisma** para operaciones críticas (pago + inventario)
+7. **Validación automática** habilitada con `ValidationPipe` en `main.ts`
 
 ## Arquitectura NestJS
 
@@ -106,9 +108,311 @@ module-name/
 ├── module-name.controller.ts  # Endpoints HTTP
 ├── module-name.service.ts     # Lógica de negocio
 ├── module-name.module.ts       # Configuración del módulo
-└── dto/                        # Data Transfer Objects (opcional)
-    ├── create-module-name.dto.ts
-    └── update-module-name.dto.ts
+├── dto/                        # Data Transfer Objects (OBLIGATORIO)
+│   ├── create-module-name.dto.ts
+│   ├── update-module-name.dto.ts
+│   └── module-name-response.dto.ts
+└── facade/                     # Facade Pattern (cuando sea necesario)
+    └── module-name.facade.ts
+```
+
+## Patrones de Diseño
+
+### DTOs (Data Transfer Objects) - OBLIGATORIO
+
+**Propósito:**
+- Validar y tipar datos de entrada/salida
+- Separar la estructura de datos de los modelos de Prisma
+- Documentar la API con Swagger
+- Prevenir inyección de datos inválidos
+
+**Reglas de Implementación:**
+
+1. **Crear DTOs para TODOS los endpoints que reciben datos:**
+   - `POST` → `CreateXxxDto`
+   - `PATCH/PUT` → `UpdateXxxDto`
+   - `GET` con query params → `QueryXxxDto`
+   - Respuestas complejas → `XxxResponseDto`
+
+2. **Ubicación:**
+   - Carpeta `dto/` dentro de cada módulo
+   - Nombre: `{action}-{module-name}.dto.ts`
+   - Ejemplo: `create-product.dto.ts`, `update-product.dto.ts`, `product-response.dto.ts`
+
+3. **Validación con class-validator:**
+   ```typescript
+   import { IsString, IsInt, IsOptional, Min, Max, IsEmail } from 'class-validator'
+   import { ApiProperty } from '@nestjs/swagger'
+   
+   export class CreateProductDto {
+     @ApiProperty({ description: 'Nombre del producto', example: 'Torta de Chocolate' })
+     @IsString()
+     @IsNotEmpty()
+     name: string
+   
+     @ApiProperty({ description: 'Descripción del producto', required: false })
+     @IsString()
+     @IsOptional()
+     description?: string
+   
+     @ApiProperty({ description: 'Precio en CLP (IVA incluido)', example: 15990 })
+     @IsInt()
+     @Min(0)
+     priceCLP: number
+   }
+   ```
+
+4. **Decoradores obligatorios:**
+   - `@ApiProperty()` de `@nestjs/swagger` para documentación
+   - Validadores de `class-validator`: `@IsString()`, `@IsInt()`, `@IsEmail()`, etc.
+   - `@IsOptional()` para campos opcionales
+   - `@Min()`, `@Max()`, `@Length()` para validaciones numéricas/de longitud
+
+5. **Uso en Controllers:**
+   ```typescript
+   @Post()
+   @ApiOperation({ summary: 'Crear un nuevo producto' })
+   @ApiResponse({ status: 201, description: 'Producto creado exitosamente' })
+   async create(@Body() createProductDto: CreateProductDto) {
+     return this.productsService.create(createProductDto)
+   }
+   ```
+
+6. **Response DTOs:**
+   - Crear DTOs de respuesta para estructurar datos de salida
+   - Excluir campos sensibles (passwordHash, tokens internos)
+   - Transformar datos de Prisma a formato de respuesta
+
+**Ejemplo completo:**
+```typescript
+// dto/create-product.dto.ts
+import { IsString, IsInt, IsOptional, Min, IsUrl } from 'class-validator'
+import { ApiProperty } from '@nestjs/swagger'
+
+export class CreateProductDto {
+  @ApiProperty({ example: 'Torta de Chocolate' })
+  @IsString()
+  name: string
+
+  @ApiProperty({ required: false })
+  @IsString()
+  @IsOptional()
+  description?: string
+
+  @ApiProperty({ example: 15990 })
+  @IsInt()
+  @Min(0)
+  priceCLP: number
+
+  @ApiProperty({ required: false })
+  @IsUrl()
+  @IsOptional()
+  imageUrl?: string
+}
+```
+
+### Facade Pattern
+
+**Propósito:**
+- Simplificar interfaces complejas
+- Agrupar múltiples operaciones relacionadas
+- Ocultar complejidad de múltiples services
+- Proporcionar una API unificada y simple
+
+**Cuándo usar Facade:**
+- Cuando un endpoint requiere múltiples operaciones de diferentes services
+- Para operaciones de negocio complejas que involucran varios módulos
+- Para simplificar la interacción entre frontend y backend
+- Cuando hay lógica de orquestación entre múltiples services
+
+**Estructura:**
+```
+module-name/
+└── facade/
+    └── module-name.facade.ts
+```
+
+**Reglas de Implementación:**
+
+1. **El Facade coordina múltiples services:**
+   ```typescript
+   @Injectable()
+   export class OrdersFacade {
+     constructor(
+       private ordersService: OrdersService,
+       private paymentsService: PaymentsService,
+       private inventoryService: InventoryService,
+     ) {}
+   
+     async createOrderWithPayment(createOrderDto: CreateOrderDto) {
+       // 1. Crear pedido
+       const order = await this.ordersService.create(createOrderDto)
+       
+       // 2. Procesar pago
+       const payment = await this.paymentsService.process(order.id, createOrderDto.payment)
+       
+       // 3. Descontar inventario
+       await this.inventoryService.decreaseStock(order.items)
+       
+       return { order, payment }
+     }
+   }
+   ```
+
+2. **El Facade NO contiene lógica de negocio:**
+   - La lógica de negocio va en los services individuales
+   - El Facade solo orquesta y coordina
+
+3. **Uso en Controllers:**
+   ```typescript
+   @Controller('orders')
+   export class OrdersController {
+     constructor(private ordersFacade: OrdersFacade) {}
+   
+     @Post()
+     async create(@Body() createOrderDto: CreateOrderDto) {
+       return this.ordersFacade.createOrderWithPayment(createOrderDto)
+     }
+   }
+   ```
+
+4. **Casos de uso comunes:**
+   - Crear pedido + procesar pago + descontar inventario
+   - Cancelar pedido + reembolsar + restaurar inventario
+   - Actualizar estado de pedido + notificar + actualizar inventario
+
+**Ejemplo completo:**
+```typescript
+// facade/orders.facade.ts
+import { Injectable } from '@nestjs/common'
+import { OrdersService } from '../orders.service'
+import { PaymentsService } from '../../payments/payments.service'
+import { InventoryService } from '../../inventory/inventory.service'
+import { CreateOrderDto } from '../dto/create-order.dto'
+
+@Injectable()
+export class OrdersFacade {
+  constructor(
+    private ordersService: OrdersService,
+    private paymentsService: PaymentsService,
+    private inventoryService: InventoryService,
+  ) {}
+
+  async createOrderWithPayment(dto: CreateOrderDto) {
+    // Orquestar múltiples operaciones
+    const order = await this.ordersService.create(dto)
+    const payment = await this.paymentsService.process(order.id, dto.payment)
+    
+    if (payment.status === 'PAID') {
+      await this.inventoryService.decreaseStock(order.items)
+    }
+    
+    return { order, payment }
+  }
+}
+```
+
+### Swagger (Documentación de API)
+
+**Propósito:**
+- Documentación automática e interactiva de la API
+- Testing de endpoints desde el navegador
+- Validación de contratos API
+- Facilita integración frontend/backend
+
+**Configuración:**
+
+1. **Instalar dependencias:**
+   ```bash
+   npm install @nestjs/swagger swagger-ui-express
+   ```
+
+2. **Configurar en `main.ts`:**
+   ```typescript
+   import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger'
+   
+   const config = new DocumentBuilder()
+     .setTitle('Pastelería Bella API')
+     .setDescription('API REST para Pastelería Bella')
+     .setVersion('1.0')
+     .addTag('products', 'Endpoints de productos')
+     .addTag('orders', 'Endpoints de pedidos')
+     .build()
+   
+   const document = SwaggerModule.createDocument(app, config)
+   SwaggerModule.setup('api/docs', app, document)
+   ```
+
+3. **Decoradores en Controllers:**
+   ```typescript
+   @Controller('products')
+   @ApiTags('products')
+   export class ProductsController {
+     @Get()
+     @ApiOperation({ summary: 'Obtener todos los productos activos' })
+     @ApiResponse({ 
+       status: 200, 
+       description: 'Lista de productos',
+       type: [ProductResponseDto]
+     })
+     async findAll() {
+       return this.productsService.findAll()
+     }
+   }
+   ```
+
+4. **Decoradores en DTOs:**
+   - `@ApiProperty()` en cada propiedad del DTO
+   - `@ApiPropertyOptional()` para campos opcionales
+   - Ejemplos y descripciones claras
+
+**Reglas de Documentación:**
+
+- **TODOS los endpoints deben estar documentados**
+- **TODOS los DTOs deben tener `@ApiProperty()` en cada campo**
+- Usar `@ApiTags()` para agrupar endpoints relacionados
+- Usar `@ApiOperation()` para describir cada endpoint
+- Usar `@ApiResponse()` para documentar respuestas posibles
+- Incluir ejemplos en `@ApiProperty()` para claridad
+
+**Acceso a Swagger:**
+- URL: `http://localhost:3001/api/docs`
+- Interfaz interactiva para probar endpoints
+- Documentación automática basada en decoradores
+
+**Ejemplo completo:**
+```typescript
+@Controller('products')
+@ApiTags('products')
+export class ProductsController {
+  constructor(private readonly productsService: ProductsService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Obtener todos los productos activos' })
+  @ApiResponse({ 
+    status: 200, 
+    description: 'Lista de productos activos',
+    type: [ProductResponseDto]
+  })
+  async findAll() {
+    return this.productsService.findAll()
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Crear un nuevo producto' })
+  @ApiResponse({ 
+    status: 201, 
+    description: 'Producto creado exitosamente',
+    type: ProductResponseDto
+  })
+  @ApiResponse({ 
+    status: 400, 
+    description: 'Datos inválidos'
+  })
+  async create(@Body() createProductDto: CreateProductDto) {
+    return this.productsService.create(createProductDto)
+  }
+}
 ```
 
 ### Prisma Service (Global)
@@ -134,18 +438,29 @@ export class ProductsService {
 
 - **Decoradores**: `@Controller('ruta')` para definir ruta base
 - **Métodos HTTP**: `@Get()`, `@Post()`, `@Patch()`, `@Delete()`
-- **Validación**: Usar `@Body()` con DTOs tipados
+- **Validación**: Usar `@Body()` con DTOs tipados y validación automática
 - **Respuestas**: Retornar objetos directamente (NestJS serializa a JSON)
+- **Swagger**: Usar `@ApiTags()`, `@ApiOperation()`, `@ApiResponse()` para documentación
 
 **Ejemplo:**
 ```typescript
 @Controller('products')
+@ApiTags('products')
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get()
+  @ApiOperation({ summary: 'Obtener todos los productos activos' })
+  @ApiResponse({ status: 200, type: [ProductResponseDto] })
   async findAll() {
     return this.productsService.findAll()
+  }
+
+  @Post()
+  @ApiOperation({ summary: 'Crear un nuevo producto' })
+  @ApiResponse({ status: 201, type: ProductResponseDto })
+  async create(@Body() createProductDto: CreateProductDto) {
+    return this.productsService.create(createProductDto)
   }
 }
 ```
@@ -207,8 +522,10 @@ export class ProductsController {
 ### Estructura
 - Todas las rutas tienen prefijo `/api`
 - Usar decoradores NestJS (`@Get()`, `@Post()`, etc.)
-- Validación con DTOs y class-validator (opcional)
+- **Validación OBLIGATORIA** con DTOs y `class-validator`
+- **Documentación OBLIGATORIA** con Swagger (`@ApiTags()`, `@ApiOperation()`, `@ApiResponse()`)
 - Guards para autenticación/autorización
+- Usar Facade pattern cuando un endpoint requiera múltiples operaciones
 
 ### Endpoints Principales
 - `POST /api/auth/login` - Login
