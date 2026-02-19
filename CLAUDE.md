@@ -4,58 +4,72 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Pastelería Bella — a full-stack ecommerce platform for a Chilean pastry bakery. Monolithic Next.js 14 app with PostgreSQL, Prisma ORM, Tailwind CSS, and TypeScript (strict mode).
+Pastelería Bella Backend API — NestJS 10 backend for a Chilean pastry bakery ecommerce platform. Serves a separate Next.js frontend via REST API.
 
 ## Common Commands
 
 ```bash
-npm run dev              # Start dev server (Next.js)
-npm run build            # Production build
-npm run lint             # ESLint via next lint
+npm run dev              # Start dev server (watch mode)
+npm run build            # Build for production (includes prisma generate)
+npm run start:prod       # Run compiled production build
 npm run db:generate      # Generate Prisma client after schema changes
 npm run db:migrate       # Run Prisma migrations (dev mode)
-npm run db:seed          # Seed database (admin user + sample products)
-npm run db:studio        # Open Prisma Studio GUI
+npm run db:seed          # Seed database with admin user + sample products
 ```
 
-**Environment variables required:** `DATABASE_URL` (PostgreSQL), `SESSION_SECRET`.
+**Environment variables required:** `DATABASE_URL` (PostgreSQL connection string), `PORT` (default 3001), `FRONTEND_URL` (for CORS), `JWT_SECRET`.
 
 ## Architecture
 
-### Routing & Layout
+### NestJS Module Structure
 
-- **App Router** (Next.js 14+) — all routes under `app/`
-- Planned route groups: `app/(cliente)/` for public routes, `app/(admin)/` for admin panel
-- API routes live under `app/api/`
-- Root layout in `app/layout.tsx`
+Standard NestJS modular architecture with Controller → Service → Prisma pattern:
+
+```
+src/
+├── auth/           # JWT auth with Passport, guards, decorators
+├── products/       # Product CRUD
+├── orders/         # Order creation with transactional inventory
+├── inventory/      # Stock adjustments and movement history
+├── prisma/         # Global PrismaService singleton
+├── app.module.ts   # Root module imports all feature modules
+└── main.ts         # Bootstrap with CORS and /api prefix
+```
 
 ### Database (Prisma + PostgreSQL)
 
-- Schema at `prisma/schema.prisma` — 7 models: User, Product, Order, OrderItem, Payment, InventoryMovement, DeliveryAssignment
-- Prisma singleton client at `lib/prisma.ts` (prevents multiple instances in dev)
-- Seed script at `prisma/seed.ts` (run with `tsx`)
-- All pricing is integer CLP (no decimals, IVA included)
+- Schema: `prisma/schema.prisma` — 7 models: User, Product, Order, OrderItem, Payment, InventoryMovement, DeliveryAssignment
+- PrismaService: `src/prisma/prisma.service.ts` — global singleton, auto-connects on module init
+- Seed: `prisma/seed.ts` (run with tsx) — creates admin user and sample products
+- All prices are **integer CLP** (pesos chilenos, IVA included, no decimals)
 
-### UI Components
+### Auth System
 
-- Reusable components in `components/ui/` (Button, Card, Badge, Input, Table)
-- Variant-based props pattern (e.g., `variant="primary"`, `size="md"`)
-- Tailwind utility classes only — no CSS modules or inline styles
+- JWT-based with `@nestjs/passport` and `passport-jwt`
+- Guards: `JwtAuthGuard` (auth), `RolesGuard` (RBAC)
+- 5 roles: `SUPER_ADMIN`, `JEFE_VENTAS`, `PRODUCCION`, `RECEPCION`, `DELIVERY`
+- Passwords hashed with bcryptjs
 
-### Auth & Security (planned/in-progress)
+### API Configuration
 
-- Custom auth with bcrypt + httpOnly cookies (no Supabase Auth)
-- 5 roles: SUPER_ADMIN, JEFE_VENTAS, PRODUCCION, RECEPCION, DELIVERY
-- Zod validation on all POST/PATCH API endpoints
-- RBAC enforced in middleware and utility functions
-- Prisma transactions for critical operations (payments, inventory)
+- Global prefix: `/api` (all routes are `/api/*`)
+- CORS: enabled for `FRONTEND_URL` with credentials
+- Default port: 3001
 
 ## Key Conventions
 
-- **Stack is locked:** Next.js 14+, PostgreSQL, Prisma, Tailwind, TypeScript. Do not introduce other frameworks or ORMs.
-- **Server-side DB access only:** Prisma queries run in server components or API routes, never on the client.
-- **Chile market V1:** CLP integers, business hours 09:00–17:00, Santiago Centro delivery zone only.
-- **Order flow:** 8 statuses (CREADO → PAGADO → EN_PREPARACION → LISTO → EN_RUTA → ENTREGADO/RETIRADO, or CANCELADO). Inventory auto-deducts on PAGADO.
-- **Design system:** Teal-600 primary, stone-600 secondary, white background. Max 3–4 colors per screen, mobile-first, `max-w-7xl` container.
-- **Path alias:** `@/*` maps to project root.
-- **Small increments:** Vertical slices, no large refactors. Each commit delivers a working feature set.
+- **Stack is locked:** NestJS 10, PostgreSQL, Prisma, TypeScript. Do not introduce other frameworks or ORMs.
+- **Controller → Service → Prisma:** Controllers handle HTTP, services contain business logic, only services access Prisma.
+- **Prisma transactions:** Use `prisma.$transaction()` for critical operations (order creation deducts inventory atomically).
+- **Chile market V1:** CLP integers only, business hours 09:00–17:00, Santiago Centro delivery zone.
+- **Order flow:** CREADO → PAGADO → EN_PREPARACION → LISTO → EN_RUTA → ENTREGADO/RETIRADO (or CANCELADO). Inventory auto-deducts when order is created.
+- **Small increments:** Vertical slices, no large refactors. Each commit should leave the system runnable.
+
+## Order State Transitions (Enforce in Service)
+
+- `PAGADO` → `EN_PREPARACION` (RECEPCION only)
+- `EN_PREPARACION` → `LISTO` (RECEPCION only)
+- `LISTO` → `EN_RUTA` (DELIVERY type only, RECEPCION)
+- `LISTO` → `RETIRADO` (PICKUP type only, RECEPCION)
+- `EN_RUTA` → `ENTREGADO` (RECEPCION or DELIVERY)
+- Any → `CANCELADO` (SUPER_ADMIN only)

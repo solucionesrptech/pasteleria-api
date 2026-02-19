@@ -22,6 +22,22 @@ async function main() {
 
   console.log('✅ Usuario admin creado:', admin.email)
 
+  // Crear usuario PRODUCCION
+  const productionPassword = 'password123'
+  const hashedProductionPassword = await bcrypt.hash(productionPassword, 10)
+
+  const productionUser = await prisma.user.upsert({
+    where: { email: 'user@example.com' },
+    update: {},
+    create: {
+      email: 'user@example.com',
+      passwordHash: hashedProductionPassword,
+      role: UserRole.PRODUCCION,
+    },
+  })
+
+  console.log('✅ Usuario de producción creado:', productionUser.email)
+
   // Crear productos de ejemplo
   const productos = [
     {
@@ -29,75 +45,91 @@ async function main() {
       description: 'Deliciosa torta de chocolate con crema y frutos secos',
       priceCLP: 15990,
       stock: 10,
-      imageUrl: null,
+      imageUrl: '/images/categorias/Velvet.JPG', // (si no tienes chocolate aún, usa una temporal)
       active: true,
     },
     {
       name: 'Torta de Fresa',
       description: 'Torta fresca con fresas naturales y crema batida',
       priceCLP: 17990,
-      stock: 8,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/Manzana.JPG', // temporal si falta fresa
       active: true,
     },
     {
       name: 'Torta de Limón',
       description: 'Torta de limón con merengue italiano',
       priceCLP: 14990,
-      stock: 12,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/limon.jpg',
       active: true,
     },
     {
       name: 'Torta de Tres Leches',
       description: 'Torta tradicional de tres leches con canela',
       priceCLP: 16990,
-      stock: 15,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/leches.JPG',
       active: true,
     },
     {
       name: 'Torta de Red Velvet',
       description: 'Torta de terciopelo rojo con queso crema',
       priceCLP: 19990,
-      stock: 6,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/Velvet.JPG',
       active: true,
     },
     {
       name: 'Torta de Zanahoria',
       description: 'Torta de zanahoria con nueces y crema de queso',
       priceCLP: 13990,
-      stock: 9,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/Zanahoria.JPG',
       active: true,
     },
     {
       name: 'Torta de Manzana',
       description: 'Torta de manzana con canela y avena',
       priceCLP: 12990,
-      stock: 11,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/Manzana.JPG',
       active: true,
     },
     {
       name: 'Torta de Coco',
       description: 'Torta de coco con merengue y coco rallado',
       priceCLP: 14990,
-      stock: 7,
-      imageUrl: null,
+      stock: 10,
+      imageUrl: '/images/categorias/coco.JPG',
       active: true,
     },
   ]
+  
 
-  // Eliminar productos existentes para evitar duplicados
-  await prisma.product.deleteMany({})
-
+  // Crear o actualizar productos (usar upsert para evitar duplicados)
   for (const producto of productos) {
-    const created = await prisma.product.create({
-      data: producto,
+    // Buscar producto existente por nombre
+    const existing = await prisma.product.findFirst({
+      where: { name: producto.name },
     })
-    console.log(`✅ Producto creado: ${created.name} - $${created.priceCLP.toLocaleString('es-CL')}`)
+
+    if (existing) {
+      // Actualizar producto existente
+      const updated = await prisma.product.update({
+        where: { id: existing.id },
+        data: {
+          ...producto,
+        },
+      })
+      console.log(`✅ Producto actualizado: ${updated.name} - $${updated.priceCLP.toLocaleString('es-CL')}`)
+    } else {
+      // Crear nuevo producto
+      const created = await prisma.product.create({
+        data: producto,
+      })
+      console.log(`✅ Producto creado: ${created.name} - $${created.priceCLP.toLocaleString('es-CL')}`)
+    }
   }
 
   console.log('🎉 Seed completado!')
