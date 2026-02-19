@@ -3,6 +3,7 @@ import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth } from '@nestjs/swagg
 import { ProductsService } from './products.service'
 import { CreateProductDto } from './dto/create-product.dto'
 import { UpdateProductDto } from './dto/update-product.dto'
+import { ProductResponseDto } from './dto/product-response.dto'
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard'
 import { RolesGuard } from '../auth/guards/roles.guard'
 import { Roles } from '../auth/decorators/roles.decorator'
@@ -17,6 +18,11 @@ export class ProductsController {
   @ApiResponse({
     status: 200,
     description: 'Lista de productos activos',
+    type: [ProductResponseDto],
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Error interno del servidor',
   })
   async findAll() {
     try {
