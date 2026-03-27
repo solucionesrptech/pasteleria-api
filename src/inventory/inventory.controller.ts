@@ -1,6 +1,7 @@
 import { Controller, Post, Body, Get, Query, UseGuards, HttpException, HttpStatus, Logger } from '@nestjs/common'
 import { InventoryService } from './inventory.service'
 import { AdjustStockDto } from './dto/adjust-stock.dto'
+import { RegisterLossDto } from './dto/register-loss.dto'
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard'
 import { RolesGuard } from '../auth/guards/roles.guard'
 import { Roles } from '../auth/decorators/roles.decorator'
@@ -46,13 +47,52 @@ export class InventoryController {
     }
   }
 
+  @Post('loss')
+  @Roles('PRODUCCION', 'SUPER_ADMIN', 'DESPACHO')
+  @ApiOperation({ summary: 'Registrar merma de inventario', description: 'Descuenta stock por producto dañado, vencido o inutilizable. Requiere cantidad > 0 y motivo.' })
+  @ApiResponse({ status: 200, description: 'Producto actualizado tras registrar la merma' })
+  @ApiResponse({ status: 400, description: 'Datos inválidos o stock insuficiente' })
+  @ApiResponse({ status: 401, description: 'No autorizado' })
+  @ApiResponse({ status: 403, description: 'Sin permisos' })
+  @ApiResponse({ status: 404, description: 'Producto no encontrado' })
+  async registerLoss(
+    @Body() dto: RegisterLossDto,
+    @CurrentUser() user: { id: string; email: string; role: string },
+  ) {
+    try {
+      this.logger.log(`Usuario ${user.email} registrando merma del producto ${dto.productId}`)
+      return await this.inventoryService.registerLoss(dto, user.id)
+    } catch (error) {
+      this.logger.error('Error en InventoryController.registerLoss:', error)
+      if (error instanceof HttpException) {
+        throw error
+      }
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+          message: 'Error al registrar merma',
+          error: error.message || 'Error desconocido',
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      )
+    }
+  }
+
   @Get('movements')
-  @Roles('PRODUCCION', 'SUPER_ADMIN')
+  @Roles('PRODUCCION', 'SUPER_ADMIN', 'ADMINISTRADOR', 'JEFE_VENTAS')
   @ApiOperation({ summary: 'Obtener historial de movimientos de inventario' })
   @ApiResponse({ status: 200, description: 'Historial de movimientos' })
-  async getInventoryMovements(@Query('productId') productId?: string) {
+  async getInventoryMovements(
+    @Query('productId') productId?: string,
+    @Query('type') type?: string,
+    @Query('dateFrom') dateFromStr?: string,
+    @Query('dateTo') dateToStr?: string,
+  ) {
     try {
-      return await this.inventoryService.getInventoryMovements(productId)
+      const dateFrom = dateFromStr ? new Date(dateFromStr) : undefined
+      const dateTo = dateToStr ? new Date(dateToStr) : undefined
+      const typeFilter = type?.trim() ? (type.trim().toUpperCase() as 'IN' | 'OUT' | 'ADJUST' | 'LOSS') : undefined
+      return await this.inventoryService.getInventoryMovements(productId, typeFilter, dateFrom, dateTo)
     } catch (error) {
       this.logger.error('Error en InventoryController.getInventoryMovements:', error)
       throw new HttpException(
