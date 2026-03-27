@@ -2,6 +2,9 @@
 /dist
 /node_modules
 
+# Prisma 7 (generado; se recrea con prisma generate)
+/src/generated
+
 # Logs
 logs
 *.log

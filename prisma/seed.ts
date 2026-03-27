@@ -1,18 +1,27 @@
-import { PrismaClient, UserRole } from '@prisma/client'
+import 'dotenv/config'
+import { PrismaPg } from '@prisma/adapter-pg'
+import { PrismaClient, UserRole } from '../src/generated/prisma/client'
 import bcrypt from 'bcryptjs'
 
-const prisma = new PrismaClient()
+const connectionString = process.env.DATABASE_URL
+if (!connectionString) {
+  throw new Error('DATABASE_URL no está definida')
+}
+
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString }),
+})
 
 async function main() {
   console.log('🌱 Iniciando seed...')
 
-  // Crear usuario SUPER_ADMIN
+  // Crear usuario SUPER_ADMIN (admin@pasteleriabella.cl)
   const adminPassword = 'admin123' // Cambiar en producción
   const hashedPassword = await bcrypt.hash(adminPassword, 10)
 
   const admin = await prisma.user.upsert({
     where: { email: 'admin@pasteleriabella.cl' },
-    update: {},
+    update: { passwordHash: hashedPassword, role: UserRole.SUPER_ADMIN },
     create: {
       email: 'admin@pasteleriabella.cl',
       passwordHash: hashedPassword,
@@ -21,6 +30,22 @@ async function main() {
   })
 
   console.log('✅ Usuario admin creado:', admin.email)
+
+  // Crear usuario admin alternativo (admin@pasteleria.local / Admin123)
+  const adminLocalPassword = 'Admin123'
+  const hashedAdminLocal = await bcrypt.hash(adminLocalPassword, 10)
+
+  const adminLocal = await prisma.user.upsert({
+    where: { email: 'admin@pasteleria.local' },
+    update: { passwordHash: hashedAdminLocal, role: UserRole.SUPER_ADMIN },
+    create: {
+      email: 'admin@pasteleria.local',
+      passwordHash: hashedAdminLocal,
+      role: UserRole.SUPER_ADMIN,
+    },
+  })
+
+  console.log('✅ Usuario admin (pasteleria.local) creado:', adminLocal.email)
 
   // Crear usuario PRODUCCION
   const productionPassword = 'password123'
@@ -37,6 +62,22 @@ async function main() {
   })
 
   console.log('✅ Usuario de producción creado:', productionUser.email)
+
+  // Crear usuario DESPACHO (despacho@pasteleria.local / Despacho123)
+  const despachoPassword = 'Despacho123'
+  const hashedDespachoPassword = await bcrypt.hash(despachoPassword, 10)
+
+  const despachoUser = await prisma.user.upsert({
+    where: { email: 'despacho@pasteleria.local' },
+    update: { passwordHash: hashedDespachoPassword, role: UserRole.DESPACHO },
+    create: {
+      email: 'despacho@pasteleria.local',
+      passwordHash: hashedDespachoPassword,
+      role: UserRole.DESPACHO,
+    },
+  })
+
+  console.log('✅ Usuario de despacho creado:', despachoUser.email)
 
   // Crear productos de ejemplo
   const productos = [

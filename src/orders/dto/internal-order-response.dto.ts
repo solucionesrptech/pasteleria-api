@@ -1,15 +1,15 @@
 import { OrderStatus, FulfillmentType } from '../../generated/prisma/client'
 
-export class OrderItemResponseDto {
+export class InternalOrderItemDto {
   id: string
   productId: string
+  productName: string
   quantity: number
   unitPriceCLP: number
   lineTotalCLP: number
-  createdAt: Date
 }
 
-export class OrderResponseDto {
+export class InternalOrderResponseDto {
   id: string
   customerName: string
   customerEmail: string
@@ -22,5 +22,5 @@ export class OrderResponseDto {
   publicToken: string
   createdAt: Date
   updatedAt: Date
-  items: OrderItemResponseDto[]
+  items: InternalOrderItemDto[]
 }
